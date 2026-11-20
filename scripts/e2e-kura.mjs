@@ -63,7 +63,7 @@ const check = (name, cond, extra = '') => { if (cond) { ok++; console.log('✓',
 
 try {
   const adm = await mkUser('adm'), non = await mkUser('non');
-  await sql(`insert into exally.app_admins(account_id) values ('${adm.id}'); insert into exally.app_entitlements(account_id, app, plan, email) values ('${adm.id}','mahjong','trial','${adm.email}'), ('${non.id}','daiko','paid','${non.email}');`);
+  await sql(`insert into exally.app_admins(account_id) values ('${adm.id}'); insert into exally.app_entitlements(account_id, app, plan, email) values ('${adm.id}','mahjong','trial','${adm.email}'), ('${non.id}','daiko','paid','${non.email}'), ('${adm.id}','suite','trial','${adm.email}'), ('${non.id}','payslip','free','${non.email}');`);
 
   for (const bn of BROWSERS) {
     console.log('── ' + bn);
@@ -147,8 +147,27 @@ try {
     check('取り消し＝倉庫も revoked', rvDb.r === rvDb.n && rvDb.n >= 1, JSON.stringify(rvDb));
     await sql(`delete from exally.app_invites where created_by='${adm.id}'`);
 
-    await page.click('#apps button[data-app="suite"]');
-    check('着く先の無いアプリ＝招待を押せない', !(await page.isEnabled('#mkInvite')) && (await page.textContent('#inviteNote')).includes('まだ招待の着く所'));
+    // ★製品で並べる（司さん 11-20）★：Rakunally に本体と給与がまとまる・Exally とダイコメは行0でも出る・給料明細/請求書は出さない
+    const names = (await page.locator('#apps button').allTextContents()).map(x => x.trim());
+    check('製品の並び＝全部・Rakunally・Exally・ダイコメ・麻雀・Castally（給料明細・請求書は無い）', ['全部', 'Rakunally', 'Exally', 'ダイコメ', '麻雀', 'Castally'].every(n => names.includes(n)) && !names.some(n => /給料明細|請求書|^suite$|^payslip$/.test(n)), JSON.stringify(names));
+    await page.click('#apps button[data-app="rakunally"]');
+    const [dbRk] = await sql(`select count(*)::int n from exally.app_entitlements where app in ('suite','payslip')`);
+    const nRk = await page.locator('#list .row').count();
+    check('Rakunally の一覧＝倉庫の suite＋payslip の数', nRk === dbRk.n, `画面${nRk} 倉庫${dbRk.n}`);
+    const subs = await page.locator('#list .row .sub').allTextContents();
+    check('Rakunally の行に「Rakunally・本体」と「Rakunally・給与」', subs.some(t => t.startsWith('Rakunally・本体')) && subs.some(t => t.startsWith('Rakunally・給与')), JSON.stringify(subs.slice(0, 3)));
+    check('着く先の無い製品＝招待を押せない', !(await page.isEnabled('#mkInvite')) && (await page.textContent('#inviteNote')).includes('Rakunally はまだ招待の着く所'));
+    await page.click('#apps button[data-app="exally"]');
+    const [dbEx] = await sql(`select count(*)::int n from exally.app_entitlements where app='exally'`);
+    if (dbEx.n === 0) check('Exally が行0＝分ける途中の字を出す（黙って空にしない）', (await page.textContent('#list')).includes('Rakunally と分ける途中'));
+    else check('Exally の一覧＝倉庫の exally の数', (await page.locator('#list .row').count()) === dbEx.n);
+    // 検索で0の時は「分ける途中」を出さない（行0の訳と取り違えない）
+    await page.click('#apps button[data-app="rakunally"]'); await page.fill('#q', 'zzz-あわない-zzz');
+    check('検索で0＝訳ではなく「合う人はいません」', (await page.textContent('#list')).includes('合う人はいません'));
+    await page.fill('#q', '');
+    check('Rakunally・本体の字に Exally が出る（分け終わるまで suite を止めると Exally も止まる）', (await page.locator('#list .row .sub').allTextContents()).some(t => t.includes('Exally も今これで決まる')));
+    await page.click('#apps button[data-app="daiko"]');
+    check('ダイコメの一覧＝倉庫の daiko の数', (await page.locator('#list .row').count()) === (await sql(`select count(*)::int n from exally.app_entitlements where app='daiko'`))[0].n);
 
     // 押す所の高さ（字14px→36・16px→44）
     const hs = await page.evaluate(() => Array.from(document.querySelectorAll('button')).filter(b => b.offsetParent).map(b => ({ t: b.textContent.trim().slice(0, 8), h: Math.round(b.getBoundingClientRect().height), fs: parseFloat(getComputedStyle(b).fontSize) })));
