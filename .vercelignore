@@ -1,0 +1,14 @@
+# ★repo には置く（門・試験・道具・覚書）が 配信には乗せない物（テスト線と本番で同じ・hakobu が本番へ運ぶ）★
+# なぜ：無いと CLAUDE.md・supabase/ の SQL・scripts/ の運ぶ道具が URL で取れた（11-20 本番 kensan 実測）。
+# 書き方は .gitignore と同じ。外す前に 画面（index.html・js・css）が読みに行かないかを数えた（注の字だけ・0か所）。
+# 配信に要るのは index.html・css/・js/・lib/ だけ＝tests/haishin.test.mjs が両方を数える。
+docs/
+supabase/
+tests/
+scripts/
+node_modules/
+.githooks/
+.github/
+CLAUDE.md
+.gitattributes
+.gitignore

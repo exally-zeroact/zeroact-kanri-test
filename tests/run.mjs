@@ -8,7 +8,7 @@ import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // ★走らせる一覧は字で書く★（scripts/tests-registered.mjs が読めるように）。置き場と一覧が食い違えば赤＝足し忘れを止める
-const files = ['hakobu.test.mjs', 'kinshi-ji.test.mjs', 'namefuda.test.mjs'];
+const files = ['haishin.test.mjs', 'hakobu.test.mjs', 'kinshi-ji.test.mjs', 'namefuda.test.mjs'];
 const oki = readdirSync(here).filter((f) => f.endsWith('.test.mjs')).sort();
 if (JSON.stringify(oki) !== JSON.stringify([...files].sort())) { console.log('★一覧と置き場が食い違う★ 置き場=' + oki.join(',') + ' 一覧=' + files.join(',')); process.exit(1); }
 let bad = 0, mi = 0;
