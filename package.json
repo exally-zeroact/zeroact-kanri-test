@@ -1,0 +1,17 @@
+{
+  "name": "zeroact-kanri",
+  "version": "0.0.0",
+  "private": true,
+  "description": "全アプリ共通の管理（司さんだけ）＝アプリを切り替えて人ごとの 無料・有料・お試し・停止 を一覧で見て切り替える・招待URL を出す",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "kinshi": "node tests/kinshi-ji.test.mjs",
+    "kura": "node scripts/kura-shiken.mjs tests/invite-kura.sql 18",
+    "e2e": "node scripts/e2e-kura.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

@@ -1,0 +1,96 @@
+name: CI
+# 管理アプリ（全アプリ共通の管理）。試験は tests/run.mjs が 全部を 1本ずつ 回す（0本は 赤・未測定は 赤）。
+# 倉庫と画面の試し（scripts/kura-shiken.mjs・scripts/e2e-kura.mjs）は倉庫の鍵が要る＝手元だけ（CLAUDE.md の2層）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --omit=dev --no-audit --no-fund
+      # run.mjs は tests/*.test.mjs を 全部 拾う＝kinshi-ji も 走る。一覧を 渡さないと「未測定」で 赤
+      - run: node tests/run.mjs
+        env:
+          KINSHI_JI: ${{ secrets.KINSHI_JI }}
+          KINSHI_JI_FINGER: ${{ vars.KINSHI_JI_FINGER }}
+
+      # ★公開 repo に 実在の 字（司さん・会社・お客さんの 本物）を 戻さない★（2026-10-10・nomiya-app e9129fb から 写した・10-11 c30af57 の版に 写し直し）
+      #   一覧は repo に 置かない＝secret KINSHI_JI（1行に 1語）。無ければ「未測定」で 赤。
+      #   指紋（変数 KINSHI_JI_FINGER）と 違えば 赤＝secret が 縮んだ・壊れた を 止める。
+      #   当たっても 字は 出さない（公開の CI ログは 誰でも 読める）。zip（xlsx 等）は ほどいて 中まで 見る。
+      #   ★fork・Dependabot の PR には secret が 渡らない＝赤のまま 止める（飛ばして 緑に しない）★
+      # ★在る試験と走る試験の突き合わせ★（rakually-test の 1本物を写した・自己確認も必ず載せる）
+      - name: 試験が登録されているか
+        run: node scripts/tests-registered.mjs
+      - name: 試験の登録の見張りの自己確認
+        run: node scripts/tests-registered.mjs --self-test
+
+      - name: 実在の字が戻っていないか（一覧は secret）
+        timeout-minutes: 10
+        # 本体が 何も 言わずに 終わる（main が 走らない 等）のを 緑に しない＝終わりの 行が 出たかも 見る
+        # shell: bash＝-eo pipefail（書かないと -e だけで、tee の 前の 終わり値が 捨てられる）
+        shell: bash
+        run: |
+          npm run kinshi | tee kinshi.out
+          grep -q "^✓ 実在の 字 0 件" kinshi.out
+        env:
+          KINSHI_JI: ${{ secrets.KINSHI_JI }}
+          KINSHI_JI_FINGER: ${{ vars.KINSHI_JI_FINGER }}
+
+      - name: 実在の字の見張りの自己確認
+        timeout-minutes: 10
+        # 全部 通って、しかも 29 組 以上・確かめた 回数 239 以上の 時だけ 緑（組の 中の 歯を 消しても 割れる）
+        shell: bash
+        run: |
+          node tests/kinshi-ji.test.mjs --self-test | tee kinshi-self.out
+          sh scripts/ci-yuka.sh kinshi-self.out 29 239
+
+      # ★床の 物差し（scripts/ci-yuka.sh）の 自己確認＝ubuntu の awk で 233・234x 等が 赤に なるか★（2026-10-11）
+      - name: 床の物差しの自己確認
+        shell: bash
+        run: |
+          sh scripts/ci-yuka.sh --self-test | tee yuka-self.out
+          sh scripts/ci-yuka.sh yuka-self.out 20
+
+  # ★実在の字の見張りを node 24（ubuntu）でも 回す★（2026-10-11）
+  #   node 24.21 の ubuntu で、奇数の 長さの Buffer を toString("utf16le") すると「double free」で process ごと 落ちた
+  #   （素の node の 1行で 再現・node 20 は 通る）。見張りは u16le() で 偶数に 揃えて 読む。
+  #   本体の 試験は node 20 の まま。ここは 見張りが node 24 でも 落ちない 事だけを 見る（後戻りを 捕まえる）。
+  kinshi-node24:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # ★床の 物差し（scripts/ci-yuka.sh）の 自己確認＝ubuntu の awk で 233・234x 等が 赤に なるか★（2026-10-11）
+      - name: 床の物差しの自己確認（node 24 の job）
+        shell: bash
+        run: |
+          sh scripts/ci-yuka.sh --self-test | tee yuka-self.out
+          sh scripts/ci-yuka.sh yuka-self.out 20
+
+      - name: 実在の字が戻っていないか（node 24）
+        shell: bash
+        run: |
+          node tests/kinshi-ji.test.mjs | tee kinshi24.out
+          grep -q "^✓ 実在の 字 0 件" kinshi24.out
+        env:
+          KINSHI_JI: ${{ secrets.KINSHI_JI }}
+          KINSHI_JI_FINGER: ${{ vars.KINSHI_JI_FINGER }}
+      - name: 実在の字の見張りの自己確認（node 24）
+        shell: bash
+        run: |
+          node tests/kinshi-ji.test.mjs --self-test | tee kinshi24-self.out
+          sh scripts/ci-yuka.sh kinshi24-self.out 29 239
