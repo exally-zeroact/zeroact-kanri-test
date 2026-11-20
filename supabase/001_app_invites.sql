@@ -10,10 +10,8 @@
 --   {ok:false, reason:'stopped'}       … 司さんが止めた人（disabled）＝戻さない（招待は減らさない）
 --   {ok:false, reason:'used'|'expired'|'revoked'|'bad'}
 
--- ★この表にはダイコメの trigger が付く（after insert・after update of used_by・app='daiko' だけ）★
---   daiko の招待が使われた時に、先取りした他人（友達のアドレスで先にパスワード登録した人）を締め出す。
---   この表を作り直す・trigger を落とす時は、先にダイコメの席へ知らせる（向こうが当て直す）。
---   本番 tnfw では、ダイコメの trigger が当たるまで daiko の招待を作らない（本番の名札 invite に daiko を書かない＝押せない）。
+-- 先取りの他人（友達のアドレスで先にパスワード登録した人）は、招待を受けた本人と同じ uid を持ち得る（共有 auth は autoconfirm）。
+--   締め出しはしない（11-20 ダイコメが trigger をやめた）。代わりに各アプリは本人の表の鍵に public.app_uid_trusted(<その app>) を掛ける。
 create table if not exists exally.app_invites (
   id          uuid primary key default gen_random_uuid(),
   app         text not null check (app ~ '^[a-z][a-z0-9_]{1,30}$'),
@@ -112,11 +110,40 @@ begin
   return jsonb_build_object('ok', true, 'app', v_inv.app, 'plan', 'free');
 end $$;
 
--- 読む側の式（招待で付いた無料だけに当てる・今在る free 行＝招待より前の物には当てない）：
---   無料 ＝ その app の行が plan 'free'（expires_at 空か先）
---         かつ （招待で付いた行なら）今のセッションがメールで入った物（時間は縛らない）で、jwt の email = used_email
---   訳：先に他人が友達のアドレスでパスワード登録していても、パスワードのセッションには効かない（共有 auth は autoconfirm）。
---       アドレスを変えた他人は jwt の email が used_email と違う＝効かない。
+-- 読む側の式 app_is_free(app)＝その app の行が plan 'free'（expires_at 空か先）かつ（その app の招待で付いた行でない or app_uid_trusted(app)）＝下の2本。
+-- 招待で来た uid を、今のセッションで本人と信じてよいか（★app ごと★・各アプリの本人の表の policy から呼ぶ）
+--   app を問わない形は取らない＝別のアプリの招待を1回受けた人の、パスワードで使っている他のアプリの鍵が黙って止まる（11-20 ダイコメの叩き）
+--   その app の招待を1本も使っていない uid ＝ true（今まで通り）
+--   その app の招待を使った uid ＝ メールで入ったセッション（時間は縛らない）・電話が空・jwt の email が その app で使った招待の used_email の全部と同じ 時だけ true
+--   ログインしていない ＝ false
+--   ★この式を鍵に掛ける app への約束★
+--   ① 入った時に rpc app_uid_trusted(<app>) を呼び、false なら「メールのリンクで入り直してください」と出して書き込みを止める
+--      （RLS の false は select が空・update が0行でエラーが出ない＝黙って「消えた」に見える・同期の道具が空を消したと取らない様に）
+--   ② policy には (select public.app_uid_trusted('<app>')) と書く（行ごとに呼ばせない）
+--   ③ service_role・edge function・持ち手の字だけで通る道（export_tokens 等）は RLS が効かない＝同じ式を自分で呼ぶ
+--   ④ この式を掛ける app にはメールで入る道が要る（パスワードだけの入口では、招待を受けた本人が いつまでも false）
+--   ⑤ 先取りの他人が招待より前に作った物は残る＝public.app_trusted_since(<app>)（招待を受けた時刻）より前の物を各アプリが見分けて捨てる
+--   ⑥ パスワード登録の直後のセッションの amr は password（11-20 khaw で測った）＝先取りの他人は最初から false
+--   ⑦ アドレスを変えた本人は false になる＝戻すのは管理者が used_email を直す
+--   ⑧ app 名が null・形の違う字なら false。ただし綴り違い（招待の無い名）は true のまま通る＝各アプリは自分の試験で 先取りの他人が false になる事を実際に叩く
+create or replace function public.app_uid_trusted(p_app text)
+returns boolean language sql stable security definer set search_path = pg_catalog, public as $$
+  select coalesce(auth.uid() is not null and p_app ~ '^[a-z][a-z0-9_]{1,30}$' and (
+    not exists (select 1 from exally.app_invites i where i.used_by = auth.uid() and i.app = p_app)
+    or (public.app_session_by_mail()
+        -- 電話が付いた人は信じない（SMS で入ったセッションも amr は otp＝メールと分けられない・claim の need_otp と揃える）
+        and not exists (select 1 from auth.users u where u.id = auth.uid() and nullif(u.phone, '') is not null)
+        and not exists (select 1 from exally.app_invites i
+                         where i.used_by = auth.uid() and i.app = p_app and i.used_email is distinct from lower(coalesce(auth.jwt()->>'email',''))))
+  ), false);
+$$;
+
+-- その uid が その app の招待を受けた時刻（受けていなければ null）＝⑤ 招待より前に作られた物を見分ける
+create or replace function public.app_trusted_since(p_app text)
+returns timestamptz language sql stable security definer set search_path = pg_catalog, public as $$
+  select max(i.used_at) from exally.app_invites i where i.used_by = auth.uid() and i.app = p_app;
+$$;
+
 create or replace function public.app_is_free(p_app text)
 returns boolean language sql stable security definer set search_path = pg_catalog, public as $$
   select exists (
@@ -125,13 +152,7 @@ returns boolean language sql stable security definer set search_path = pg_catalo
        and (e.expires_at is null or e.expires_at > now())
        and (
          not exists (select 1 from exally.app_invites i where i.used_by = e.account_id and i.app = e.app)
-         -- 電話が付いた人は 招待の無料を読まない（SMS で入ったセッションも amr は otp＝メールと分けられない・claim の need_otp と揃える）
-         or (public.app_session_by_mail()
-             and not exists (select 1 from auth.users u where u.id = e.account_id and nullif(u.phone, '') is not null)
-             and exists (
-               select 1 from exally.app_invites i
-                where i.used_by = e.account_id and i.app = e.app
-                  and i.used_email = lower(coalesce(auth.jwt()->>'email',''))))
+         or public.app_uid_trusted(p_app)
        )
   );
 $$;
@@ -166,12 +187,16 @@ revoke all on function public.app_session_by_mail(int) from public, anon;
 revoke all on function public.app_invite_create(text) from public, anon;
 revoke all on function public.app_invite_revoke(uuid) from public, anon;
 revoke all on function public.app_invite_claim(text) from public, anon;
+revoke all on function public.app_uid_trusted(text) from public, anon;
+revoke all on function public.app_trusted_since(text) from public, anon;
 revoke all on function public.app_is_free(text) from public, anon;
 revoke all on function public.app_admin_list() from public, anon;
 grant execute on function public.app_session_by_mail(int) to authenticated;
 grant execute on function public.app_invite_create(text) to authenticated;
 grant execute on function public.app_invite_revoke(uuid) to authenticated;
 grant execute on function public.app_invite_claim(text) to authenticated;
+grant execute on function public.app_uid_trusted(text) to authenticated;
+grant execute on function public.app_trusted_since(text) to authenticated;
 grant execute on function public.app_is_free(text) to authenticated;
 grant execute on function public.app_admin_list() to authenticated;
 revoke all on function public.app_invite_list() from public, anon;

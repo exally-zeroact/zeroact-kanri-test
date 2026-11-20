@@ -169,5 +169,57 @@ begin
      and exists (select 1 from exally.app_invites where id = (t->>'id')::uuid and used_by = u5)
   then ok := ok + 1; log := log || ' ✓⑱'; else ng := ng + 1; log := log || ' ✗⑱' || translate(coalesce(r::text,''),'"','~'); end if;
 
+  -- ⑲ 共通の式 app_uid_trusted(app)（app ごと）
+  --   招待を使っていない u2 はパスワードでも true／招待を使った u1 は メール＋同じアドレス＋電話なし だけ true／ログイン無し false／anon は呼べない
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u2,'email',m2,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','password','timestamp',now_s)))::text, true);
+  b := public.app_uid_trusted('kanri_shiken');
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u1,'email',m1,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
+  b := b and public.app_uid_trusted('kanri_shiken');
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u1,'email',m1,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','password','timestamp',now_s)))::text, true);
+  b := b and not public.app_uid_trusted('kanri_shiken');
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u1,'email','other-' || m1,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
+  b := b and not public.app_uid_trusted('kanri_shiken');
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u1,'email',m1,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
+  update auth.users set phone = '819000000000' where id = u1;
+  b := b and not public.app_uid_trusted('kanri_shiken');
+  update auth.users set phone = null where id = u1;
+  b := b and public.app_uid_trusted('kanri_shiken');
+  -- 別の app の招待を別のアドレスで受けても、この app には効かない（パスワードでも true のまま＝u2 で見る）
+  insert into exally.app_invites (app, token_hash, created_by, used_by, used_email, used_at)
+    values ('kanri_shiken2', repeat('c',64), v_admin, u2, 'zz-' || lower(m2), now());
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u2,'email',m2,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','password','timestamp',now_s)))::text, true);
+  b := b and public.app_uid_trusted('kanri_shiken') and not public.app_uid_trusted('kanri_shiken2');
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u1,'email',m1,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
+  -- 同じ app の招待を別のアドレスでもう1本受けた uid は、どちらのアドレスでも信じない
+  insert into exally.app_invites (app, token_hash, created_by, used_by, used_email, used_at)
+    values ('kanri_shiken', repeat('b',64), v_admin, u1, 'zz-' || lower(m1), now());
+  b := b and not public.app_uid_trusted('kanri_shiken');
+  -- app 名が null・形の違う字は false（u2 は招待の無い人＝形が合えば true の人）
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u2,'email',m2,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','password','timestamp',now_s)))::text, true);
+  b := b and public.app_uid_trusted(null) is false and public.app_uid_trusted('Kanri Shiken') is false;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  b := b and public.app_uid_trusted('kanri_shiken') is false;
+  b := b and not has_function_privilege('anon', 'public.app_uid_trusted(text)', 'execute')
+         and has_function_privilege('authenticated', 'public.app_uid_trusted(text)', 'execute');
+  if b then ok := ok + 1; log := log || ' ✓⑲'; else ng := ng + 1; log := log || ' ✗⑲'; end if;
+
+  -- ⑳ policy の形 (select app_uid_trusted) を authenticated の役で通す／app_trusted_since
+  --   u5（⑱ で招待を受けた）の表を作り、鍵に (select public.app_uid_trusted('kanri_shiken')) を掛ける
+  create temp table if not exists kanri_waza (owner uuid, v int) on commit drop;
+  insert into kanri_waza values (u5, 1);
+  alter table kanri_waza enable row level security;
+  create policy kw_own on kanri_waza for all to authenticated using (owner = auth.uid() and (select public.app_uid_trusted('kanri_shiken'))) with check (owner = auth.uid() and (select public.app_uid_trusted('kanri_shiken')));
+  grant select, update on kanri_waza to authenticated;
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u5,'email',m5,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
+  b := public.app_trusted_since('kanri_shiken') is not null and public.app_trusted_since('kanri_shiken2') is null;
+  execute 'set local role authenticated';
+  select count(*) into n from kanri_waza; b := b and n = 1;
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u5,'email',m5,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','password','timestamp',now_s)))::text, true);
+  select count(*) into n from kanri_waza; b := b and n = 0;
+  update kanri_waza set v = 2; get diagnostics n = row_count; b := b and n = 0;
+  execute 'reset role';
+  b := b and (select v from kanri_waza) = 1;
+  if b then ok := ok + 1; log := log || ' ✓⑳'; else ng := ng + 1; log := log || ' ✗⑳'; end if;
+
   raise exception 'KEKKA ok=% ng=% :%', ok, ng, log;
 end $$;
