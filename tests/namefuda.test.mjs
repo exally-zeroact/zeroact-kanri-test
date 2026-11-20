@@ -2,6 +2,7 @@
 //  ① 帯は test の時だけ（prod・名札なし・知らない値 は 出さない）
 //  ①' 名札の 線 と 倉庫が 合っているか（test＝khaw／prod＝tnfw）＝片方だけ入れ替わる形（帯も出ず画面で気づけない）を止める
 //  ② 倉庫の 名前（ref）を 持つのは 名札だけ。例外＝下の KHAW_PIN（テスト倉庫に釘付けした手元の道具＝khaw しか持ってはいけない）とこのファイル
+//  ⑤ 招待の着く先＝https・test は -test の配信・prod は -test 以外（本番の客がテストへ飛ぶのを止める）
 //  ③ 名札の 線 と この repo の 線（git の origin の名前）が 合っているか
 //     ★フォルダ名では 決めない★。origin が まだ無い時は ★未測定（exit 3）★＝緑と 呼ばない
 import assert from 'node:assert/strict';
@@ -32,6 +33,12 @@ assert.ok(/^sb_publishable_/.test(S.key), '名札の鍵は 公開用(publishable
 const ref = S.url.slice(8, 28);
 // ①'
 assert.equal(ref, REFS[S.env], '名札 ' + S.env + ' なのに倉庫が ' + ref);
+// ⑤ 招待の着く先は https・本番の名札なら -test の配信を 向かない（テスト線は -test を向く）
+for (const [app, u] of Object.entries(S.invite || {})) {
+  assert.ok(/^https:\/\//.test(u), '招待の着く先が https でない：' + app);
+  const isTest = /-test[.-]/.test(new URL(u).hostname);
+  assert.equal(isTest, S.env === 'test', '名札 ' + S.env + ' なのに 招待 ' + app + ' の着く先が ' + u);
+}
 
 // ② ref の 字は 名札にしか 無い（例外の道具は khaw だけ・本番の ref を持たない）
 const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);

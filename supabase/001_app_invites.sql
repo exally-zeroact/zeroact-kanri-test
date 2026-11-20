@@ -10,6 +10,10 @@
 --   {ok:false, reason:'stopped'}       … 司さんが止めた人（disabled）＝戻さない（招待は減らさない）
 --   {ok:false, reason:'used'|'expired'|'revoked'|'bad'}
 
+-- ★この表にはダイコメの trigger が付く（after insert・after update of used_by・app='daiko' だけ）★
+--   daiko の招待が使われた時に、先取りした他人（友達のアドレスで先にパスワード登録した人）を締め出す。
+--   この表を作り直す・trigger を落とす時は、先にダイコメの席へ知らせる（向こうが当て直す）。
+--   本番 tnfw では、ダイコメの trigger が当たるまで daiko の招待を作らない（本番の名札 invite に daiko を書かない＝押せない）。
 create table if not exists exally.app_invites (
   id          uuid primary key default gen_random_uuid(),
   app         text not null check (app ~ '^[a-z][a-z0-9_]{1,30}$'),
