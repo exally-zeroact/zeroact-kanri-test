@@ -76,6 +76,14 @@ begin
   b := b and public.app_is_free('kanri_shiken');
   if b then ok := ok + 1; log := log || ' ✓⑨'; else ng := ng + 1; log := log || ' ✗⑨'; end if;
 
+  -- ⑨b 招待の無料を受けた人に後から電話が付く＝SMS の otp セッションでは無料にならない（電話を外せば戻る）
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u1,'email',m1,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
+  update auth.users set phone = '819000000000' where id = u1;
+  b := not public.app_is_free('kanri_shiken');
+  update auth.users set phone = null where id = u1;
+  b := b and public.app_is_free('kanri_shiken');
+  if b then ok := ok + 1; log := log || ' ✓⑨b'; else ng := ng + 1; log := log || ' ✗⑨b'; end if;
+
   -- ⑩ 2人目が同じ字＝used
   perform set_config('request.jwt.claims', jsonb_build_object('sub',u2,'email',m2,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
   r := public.app_invite_claim(tok);

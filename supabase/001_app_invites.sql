@@ -125,7 +125,10 @@ returns boolean language sql stable security definer set search_path = pg_catalo
        and (e.expires_at is null or e.expires_at > now())
        and (
          not exists (select 1 from exally.app_invites i where i.used_by = e.account_id and i.app = e.app)
-         or (public.app_session_by_mail() and exists (
+         -- 電話が付いた人は 招待の無料を読まない（SMS で入ったセッションも amr は otp＝メールと分けられない・claim の need_otp と揃える）
+         or (public.app_session_by_mail()
+             and not exists (select 1 from auth.users u where u.id = e.account_id and nullif(u.phone, '') is not null)
+             and exists (
                select 1 from exally.app_invites i
                 where i.used_by = e.account_id and i.app = e.app
                   and i.used_email = lower(coalesce(auth.jwt()->>'email',''))))
