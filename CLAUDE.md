@@ -16,7 +16,7 @@
 
 ## 試験（2層検証・global-rules §11）
 ① 本物のエンジンに全パターンを流し、客に見える返しで期待値と突き合わせる
-　＝`npm run kura`（`tests/invite-kura.sql` を khaw の取引の中で流し、最後に raise で巻き戻す・19/19・残り0）
+　＝`npm run kura`（`tests/invite-kura.sql` を khaw の取引の中で流し、最後に raise で巻き戻す・20/20・残り0）
 ② 実 UI（Playwright）で全タブ・全ボタン・全入力を押し、JS エラー 0・倉庫に書かれた値まで確かめる
 　＝`npm run e2e`（chromium＋webkit・使い捨ての人2人を作って finally で消し、残り0を数える・絵は %TEMP%/kanri-e2e）
 - ①② は倉庫の鍵（~/.supabase-token）が要る＝手元だけ。CI は `node tests/run.mjs`（名札・運ぶ道具・実在の字）＋ `scripts/tests-registered.mjs` とその自己確認。

@@ -4,7 +4,7 @@
 do $$
 declare
   v_admin uuid; v_admin_mail text;
-  u1 uuid; m1 text; u2 uuid; m2 text; u3 uuid; m3 text; u4 uuid; m4 text;
+  u1 uuid; m1 text; u2 uuid; m2 text; u3 uuid; m3 text; u4 uuid; m4 text; u5 uuid; m5 text;
   t jsonb; tok text; tok2 text; r jsonb; ok int := 0; ng int := 0; log text := '';
   now_s bigint := extract(epoch from now())::bigint;
   b boolean; n int;
@@ -14,7 +14,8 @@ begin
   select id, email into u2, m2 from auth.users where email is not null and coalesce(is_anonymous,false)=false and nullif(phone,'') is null and id <> v_admin and id not in (select account_id from exally.app_admins) order by created_at limit 1 offset 1;
   select id, email into u3, m3 from auth.users where email is not null and coalesce(is_anonymous,false)=false and nullif(phone,'') is null and id <> v_admin and id not in (select account_id from exally.app_admins) order by created_at limit 1 offset 2;
   select id, email into u4, m4 from auth.users where email is not null and coalesce(is_anonymous,false)=false and nullif(phone,'') is null and id <> v_admin and id not in (select account_id from exally.app_admins) order by created_at limit 1 offset 3;
-  if u4 is null then raise exception 'KEKKA 試しの人が4人おらん'; end if;
+  select id, email into u5, m5 from auth.users where email is not null and coalesce(is_anonymous,false)=false and nullif(phone,'') is null and id <> v_admin and id not in (select account_id from exally.app_admins) order by created_at limit 1 offset 4;
+  if u5 is null then raise exception 'KEKKA 試しの人が5人おらん'; end if;
 
   -- 呼ぶ人を切り替える小道具（jwt の形＝Supabase の amr [{method,timestamp}]）
 
@@ -142,6 +143,31 @@ begin
   perform set_config('request.jwt.claims', jsonb_build_object('sub',u4,'email',m4,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
   r := public.app_invite_claim(tok);
   if r->>'already' = 'free' and exists (select 1 from exally.app_invites where id = (t->>'id')::uuid and used_at is null) then ok := ok + 1; log := log || ' ✓⑰'; else ng := ng + 1; log := log || ' ✗⑰' || r::text; end if;
+
+  -- ⑱ 本物の役（authenticated）で受ける＝実行の権利だけで通る・表は0行に見えて書けない／anon は呼べない
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',v_admin,'email',v_admin_mail,'role','authenticated','amr','[]'::jsonb)::text, true);
+  t := public.app_invite_create('kanri_shiken'); tok := t->>'token';
+  perform set_config('request.jwt.claims', jsonb_build_object('sub',u5,'email',m5,'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',now_s)))::text, true);
+  b := true;
+  execute 'set local role anon';
+  begin
+    perform public.app_invite_claim(tok); b := false;
+  exception when insufficient_privilege then null;
+  end;
+  execute 'set local role authenticated';
+  -- 表は select だけ渡してある＝RLS で管理者でない人には0行（行は在る）／書くのは弾かれる
+  select count(*) into n from exally.app_invites;
+  b := b and n = 0;
+  begin
+    insert into exally.app_invites (app, token_hash, created_by) values ('kanri_shiken', repeat('a',64), u5); b := false;
+  exception when insufficient_privilege then null;
+  end;
+  r := public.app_invite_claim(tok);
+  b := b and r->>'ok' = 'true' and r->>'plan' = 'free' and public.app_is_free('kanri_shiken');
+  execute 'reset role';
+  if b and exists (select 1 from public.exally_entitlements where account_id = u5 and app = 'kanri_shiken' and plan = 'free')
+     and exists (select 1 from exally.app_invites where id = (t->>'id')::uuid and used_by = u5)
+  then ok := ok + 1; log := log || ' ✓⑱'; else ng := ng + 1; log := log || ' ✗⑱' || translate(coalesce(r::text,''),'"','~'); end if;
 
   raise exception 'KEKKA ok=% ng=% :%', ok, ng, log;
 end $$;

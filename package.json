@@ -8,7 +8,7 @@
   "scripts": {
     "test": "node tests/run.mjs",
     "kinshi": "node tests/kinshi-ji.test.mjs",
-    "kura": "node scripts/kura-shiken.mjs tests/invite-kura.sql 19",
+    "kura": "node scripts/kura-shiken.mjs tests/invite-kura.sql 20",
     "e2e": "node scripts/e2e-kura.mjs"
   },
   "devDependencies": {
